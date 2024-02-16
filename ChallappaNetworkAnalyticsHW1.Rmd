@@ -1,0 +1,267 @@
+---
+title: "Network Ana. Empirical Assing. 1"
+author: "Lekha A. Challappa"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+  pdf_document: default
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r Question 1A/B, echo=TRUE}
+#Features: ego, alter, social_tie, task_tie 
+#social_tie: student reports having a social relationship with another student 
+#Task_tie: student reports working w/ another student on a course-related task inside/outside of class 
+#Network: in the form of a edge list (each row represents a potential tie) 
+#Ego: focal node (vertex), ego "sends" ties Alter: non-focal node, alter "receives" ties 
+#Number: the strength of each tie (weight), if the number is 0 (no relationship between ego-alter) 
+#indegree (number of ties directed to a node)
+#outdegree (number of ties that a node directs to others). 
+#Strong Triadic Closure: increased opportunity for nodes A and C with common neighbor B to meet and therefore create at least weak ties.
+
+#Loading the Data 
+library(igraph)
+library(dplyr)
+
+# Read data
+network_data <- read.csv('/Users/lekhac/Desktop/NETWORK ANALYTICS/Assingment 1/social_and_task_network.csv')
+
+# Question 1: Part A
+# Creating a unified set of vertices
+all_vertices <- unique(c(network_data$ego, network_data$alter))
+vertex_dataframe <- data.frame(name = all_vertices)
+
+# Create graphs including all vertices in both networks
+social_network <- graph_from_data_frame(d = subset(network_data, social_tie > 0, select = c(ego, alter)),
+                                        vertices = vertex_dataframe, directed = TRUE)
+task_network <- graph_from_data_frame(d = subset(network_data, task_tie > 0, select = c(ego, alter)),
+                                      vertices = vertex_dataframe, directed = TRUE)
+
+# Calculate centralities, ensuring we use the same order of vertices
+calculate_centralities <- function(graph, vertices) {
+  centrality_measures <- data.frame(
+    indegree = degree(graph, mode = 'in')[vertices$name],
+    outdegree = degree(graph, mode = 'out')[vertices$name],
+    closeness = closeness(graph)[vertices$name],
+    betweenness = betweenness(graph)[vertices$name],
+    PageRank = page_rank(graph)$vector[vertices$name]
+  )
+  rownames(centrality_measures) <- vertices$name
+  return(centrality_measures)
+}
+
+# Calculate centralities for both networks
+social_centralities <- calculate_centralities(social_network, vertex_dataframe)
+task_centralities <- calculate_centralities(task_network, vertex_dataframe)
+
+# Question 1: Part B
+# Correlation Comp. 
+correlations <- cor(social_centralities, task_centralities)
+print(correlations)
+```
+
+---
+Question 1B Explanations: 
+A. Which measures in the task network are most closely related to those in the socializing network?
+
+Betweenness centrality shows the highest correlation between the social and task networks with a coefficient of 
+0.8034418. The next highest correlation is for outdegree centrality with a coefficient of 0.6996636.
+
+B. Name at least one insight can you draw from the relationships between these five measures across the two networks.
+
+1. Centrality and Social Butterfly:
+The strong correlation in betweenness centrality suggests that students who are central in their social circles (social butterflys) are also central in academic collaborations. This could indicate that social butterflys are also key in collaborative learning environments. These individuals may be adept at bridging gaps between various peer groups, enhancing the exchange of knowledge and support.
+
+2. Leadership in/out of School:
+Students with high outdegree centrality in both networks are likely those who reach out and initiate interactions. In a social context, they may be the ones to organize activities, and in an academic setting, they might be the ones to form study groups or lead project teams. Their engagement can contribute significantly to building a sense of community and support among their peers.
+---
+
+```{r Question 2A, echo=TRUE}
+# Question 2: Part A
+library(ggplot2)
+
+# Define mean strength for social and task ties
+mean_social_strength <- mean(network_data$social_tie[network_data$social_tie > 0])
+mean_task_strength <- mean(network_data$task_tie[network_data$task_tie > 0])
+
+# Classify ties as strong or weak based on mean strength
+network_data$social_tie_type <- ifelse(network_data$social_tie > mean_social_strength, 'strong', 'weak')
+network_data$task_tie_type <- ifelse(network_data$task_tie > mean_task_strength, 'strong', 'weak')
+
+# Create a combined network with both tie types
+network_data$strength_type <- ifelse(network_data$social_tie_type == 'strong' | network_data$task_tie_type == 'strong', 'strong', 'weak')
+graph_combined <- graph_from_data_frame(network_data, directed = FALSE)
+
+# Assign colors based on tie strength
+E(graph_combined)$color <- ifelse(E(graph_combined)$strength_type == 'strong', 'red', 'grey')
+
+# Visualize the network with strong (black) and weak (grey) ties
+plot(graph_combined, edge.width = E(graph_combined)$weight, edge.color = E(graph_combined)$color)
+
+```
+
+```{r Question 2B-EC, echo=TRUE}
+# Question 2: Part B (EXTRA CREDIT!)
+# Function--> Strong Triadic Closure Viol. 
+check_STC <- function(graph) {
+  violations <- 0
+  for (v in V(graph)) {
+    # Get neighbors of the vertex
+    neighbors <- neighbors(graph, v)
+    if (length(neighbors) > 1) {
+      # Check every pair of neighbors
+      for (i in 1:(length(neighbors) - 1)) {
+        for (j in (i + 1):length(neighbors)) {
+          # If there's no edge between the neighbors and both ties to the node are strong, it's a violation
+          if (!are_adjacent(graph, neighbors[i], neighbors[j]) &&
+              E(graph)[get.edge.ids(graph, c(v, neighbors[i]))]$strength_type == 'strong' &&
+              E(graph)[get.edge.ids(graph, c(v, neighbors[j]))]$strength_type == 'strong') {
+            violations <- violations + 1
+          }
+        }
+      }
+    }
+  }
+  #Each violation is counted twice
+  return(violations / 2)
+}
+
+# Calculate STC violations
+stc_violations <- check_STC(graph_combined)
+
+# Calculate: Prop. of Violations
+stc_proportion <- stc_violations / choose(vcount(graph_combined), 2)
+
+#Print
+print(stc_proportion)
+
+```
+
+```{r Question 3A: CODE, echo=TRUE}
+# Question 3: Part A
+# Calculate edge betweenness
+edge_betweenness <- edge.betweenness(graph_combined)
+
+# Add the betweenness scores to the graph object as an edge attribute
+E(graph_combined)$betweenness <- edge_betweenness
+
+# Examine the relationship between betweenness and tie strength
+edge_data <- get.data.frame(graph_combined, what = "edges")
+
+# Adding Binary Var
+edge_data$is_strong <- ifelse(edge_data$strength_type == 'strong', 1, 0)
+
+# Summary stats
+summary(lm(betweenness ~ is_strong, data = edge_data))
+
+
+```
+
+---
+Question 3B Explanations: 
+A. Does it seem like edges with high betweenness tend to be strong or weak ties, according to the measure of tie strength we used in Question 2? **Suppose that a tie is strong if it is above the mean strength for that type, conditional on the tie existing—that is, do not include weights of 0 in the calculation of the mean.
+
+With the measure of tie strength used (strong if above the mean strength, based on non-zero weights), there doesn't seem to be a clear tendency for edges with high betweenness to be strong/weak ties. The p-value associated with the is_strong coefficient is 0.235, which is above 0.05 for statistical significance. This suggests that we cannot assert that edges with high betweenness are either strong or weak ties. 
+
+
+B. Does this result make sense given the shape of the networks?
+
+YES:
+I. Redundancy: The network's dense structure means that there are likely multiple paths between any two nodes. This redundancy can mean that no single strong tie is critical for connecting different parts of the network because there are many alternative routes that information or resources could flow through.
+
+II. Bridging: Some of the red (strong) ties may serve as bridges between different clusters, but there are also many grey (weak) ties doing the same, which could explain the non-significant difference in betweenness centrality between strong and weak ties. The presence of multiple weak ties serving as bridges can diminish the importance of strong ties (in terms of betweenness).
+---
+
+```{r Question 4A: CODE, echo=TRUE}
+#install.packages("igraph")
+#library(igraph)
+
+# Adjacency matrix (combined graph)
+adj_matrix <- as.matrix(as_adjacency_matrix(graph_combined, sparse = FALSE))
+
+# Reachability matrix (matrix multiplication)
+# Is there a walk of any length between each pair of nodes in the network 
+reachability_matrix <- (adj_matrix %*% adj_matrix)
+diag(reachability_matrix) <- 1  #diagonal -->1 (reflexivity)
+while (TRUE) {
+  old_reachability_matrix <- reachability_matrix #using the matrix multiplied adj matrix and setting it to "old or version 1"
+  reachability_matrix <- reachability_matrix + (reachability_matrix %*% adj_matrix)
+  reachability_matrix[reachability_matrix > 0] <- 1
+  if (identical(reachability_matrix, old_reachability_matrix)) {
+    break
+  }
+}
+
+# Count pairs of nodes without walks between them
+no_walks <- sum(reachability_matrix == 0) - length(diag(reachability_matrix))  # Exclude diagonal
+no_walk_pairs <- no_walks / 2  # Each pair is counted twice
+
+# Verification (igraph's distances function)
+distance_matrix <- distances(graph_combined)
+no_paths <- sum(!is.finite(distance_matrix)) - length(diag(distance_matrix))  # Exclude diagonal
+no_path_pairs <- no_paths / 2  # Each pair is counted twice
+
+# Results
+print(paste("Pairs of nodes without walks using matrix multiplication:", no_walk_pairs))
+print(paste("Pairs of nodes without walks using igraph's distances function:", no_path_pairs))
+
+```
+
+---
+Question 4A: Explanations
+A. How many pairs of nodes do not have walks between one another? 11 pairs of nodes without walks between them 
+B. Explain why the matrix calculation given in class WORKS 
+
+   I. Adjacency Matrix (adj_matrix): The adjacency matrix represents the connections between nodes in the network. Each cell (i, j) in the matrix is 1 if there is an edge (or link) from node i to node j and 0 otherwise.
+   
+   II. Reachability Matrix Calculation: The reachability matrix determines whether a path exists between any two nodes in the network. This is accomplished by multiplying the adjacency matrix by itself (power calc.). If the (i, j) entry in the k-th power of the adjacency matrix is positive, it indicates that there is at least one walk (of length k) from node i to node j.By repeatedly multiplying the adjacency matrix and updating the reachability matrix, the code checks for walks of increasing lengths until no new walks are found (the reachability matrix STOPS changing). Setting the diagonal to 1 accounts for reflexivity, indicating that each node IS SELF-REACHABLE (a walk of length 0).
+   
+  III. Counting Pairs Without Walks: After determining reachability, the code counts the number of zero entries in the reachability matrix, which represent pairs of nodes without a walk between them. The diagonal entries are subtracted from this count since they represent self-reachable nodes, not distinct node pairs. The result is then halved (no_walk_pairs) because the adjacency matrix is symmetric, meaning each pair is counted twice.
+  
+  IV. Verification with igraph: The distance function in igraph calculates the shortest paths between all pairs of vertices. If there is no path between two nodes, the distance is infinite (Inf). The code counts the number of infinite entries to verify the number of node pairs without walks
+---
+
+. \-\--
+
+```{r Question 5: CODE, echo=TRUE}
+library(igraph)
+
+# Network-level degree centrality
+network_level_centrality <- function(g) {
+  deg <- degree(g)
+  max_deg <- max(deg)
+  sum_abs_diff <- sum(abs(max_deg - deg))
+  n <- vcount(g)
+  return(sum_abs_diff / ((n - 1) * (n - 2)))
+}
+
+# Star network (C_degree = 1)
+n <- 6  # Adjust n for the number of nodes in the network
+star_network <- make_star(n, mode = "undirected")
+star_centrality <- network_level_centrality(star_network)
+
+# Plot Star
+plot(star_network, main = paste("Star Network (C_degree =", star_centrality, ")"))
+
+# Complete network (C_degree = 0)
+complete_network <- make_full_graph(n)
+complete_centrality <- network_level_centrality(complete_network)
+
+# Plot Complete
+plot(complete_network, main = paste("Complete Network (C_degree =", complete_centrality, ")"))
+
+```
+
+![](Desktop/Screenshot%202024-02-11%20at%201.51.09%20PM.png){width="410"}
+
+---
+Question 5B: Explanations A. Would this relationship hold true for these networks for other measures of centrality, such as closeness or betweeness?
+
+NO- I. Closeness Centrality: In a star network, the central node has the highest closeness centrality since it is the least distance away from all other nodes. However, in a complete network, closeness centrality would be the same for all nodes because each node is equally close to all others.
+
+Betweenness Centrality: In a star network, the central node would have the highest betweenness centrality, as all paths between any two peripheral nodes must pass through it. In a complete network, betweenness centrality for all nodes would be zero because no node lies on the path between any other two nodes (each pair of nodes is directly connected).
+---
